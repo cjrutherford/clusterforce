@@ -34,7 +34,6 @@ class FifoQueue<T>{
     }
 }
 
-
 class Collector{
     queue: FifoQueue<Collection>;
 
@@ -46,6 +45,39 @@ class Collector{
     }
     getProcessRange(pageSize: number = 20){
         return this.queue.get(pageSize);
+    }
+    add(newData: Collection){
+        this.queue.add(newData);
+    }
+}
+
+class MainProcess{
+    collector: Collector;
+    private static instance: MainProcess;
+    private workers: Worker[];
+    private constructor(){
+        for(let i=0; i < CLUSTER_SIZE; i++){
+            const worker = cluster.fork({part: i});
+            worker.on('message', this.workerResponses)
+        }
+    }
+    private workerResponses(msg: any, worker: Worker){
+        console.log(msg);
+        const {data} = msg;
+        switch(data.request){
+            case 'discoveryComplete':
+                console.log('discovery Processed.');
+                console.log(data.data);
+                break;
+            default:
+                console.log('no action required for this message type.');
+        }
+    }
+    public MainProcess(){
+        if(!MainProcess.instance){
+            MainProcess.instance = new MainProcess();
+        }
+        return MainProcess.instance;
     }
 }
 
@@ -73,7 +105,11 @@ if(cluster.isMaster){
     for(let i=0; i < CLUSTER_SIZE; i++){
         // workers.push(cluster.fork({part: i}));
         const worker = cluster.fork({part: i});
-        worker.on('message', (msg) => {
+        /**
+         * Let's move the event handler for the message outside this block.
+         * Maybe call it `mainEvents`
+         */
+        worker.on('message', (msg, worker) => {
             console.log(msg);
             const {data} = msg;
             switch(data.request){
@@ -87,9 +123,9 @@ if(cluster.isMaster){
         });
         workers.push(worker);
     }
-    cluster.once('ready', (worker) => {
-        console.log('parent received a ready signal');
-    })
+    // cluster.once('ready', (worker) => {
+    //     console.log('parent received a ready signal');
+    // })
     // while()
     // cluster.workers[0] ? cluster.workers[0].send({request: 'processDiscovery'}) : (() => {
     //     console.error(`workers are not initialized.`);
@@ -104,6 +140,10 @@ if(cluster.isMaster){
         !!process.send ? process.send({request: 'discoveredData', data: discovery}): console.error('unable to send master message because send is not defined on process in this instance.');
     }
     // process.emit('ready');
+    /**
+     * Let's also do the same as we did in the main process 
+     * and define a worker message handler elsewhere.
+     */
     process.on('message', (msg) => {
 
     });
