@@ -1,0 +1,10 @@
+{
+  "name": "clusterforce",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "Chris Rutherford <therealchrisrutherford@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@types/node": "^14.14.37"
+  }
+}
