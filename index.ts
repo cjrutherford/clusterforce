@@ -54,19 +54,24 @@ class Collector{
 class MainProcess{
     collector: Collector;
     private static instance: MainProcess;
+    private writer: Worker;
     private workers: Worker[] = [];
+    private partSize: number;
     private constructor(){
         for(let i=0; i < CLUSTER_SIZE; i++){
             const worker = cluster.fork({part: i});
             worker.on('message', this.workerResponses);
-            this.workers.push(worker);
+            if(i === 0){
+                this.writer = worker;
+            } else {
+                this.workers.push(worker);
+            }
         }
         /**
          * this is part of a scenario that I think could keep us from
          * having to have the worker determine if discovery should be done.
          */
         cluster.once('online', this.workerIsOnline);
-        setTimeout(() => process.exit(), 10000);
     }
 
     /**
@@ -87,16 +92,30 @@ class MainProcess{
                 console.log('discovery Processed.');
                 this.queueDiscovery(data);
                 break;
+            case 'collectionSuccess':
+                this.writer.send({request: 'writeData', data});
+                if(this.collector.length() > 0){
+                    worker.send({request: 'processCollectionPart', data: this.collector.getProcessRange(this.partSize)})
+                }
+                break;
+            case 'collectionFailure':
+                this.processCollectionFailure(data, worker)
+                break;
             default:
                 console.log('no action configured for this message type.');
         }
     }
 
+    private processCollectionFailure(data: any, worker: Worker){
+        this.collector.add(data);
+        worker.send({request: 'processCollectionPart', data: this.collector.getProcessRange});
+    }
+
     private queueDiscovery(data: Collection[]){
         this.collector = new Collector(data);
-        const partSize = (this.collector.length()) / CLUSTER_SIZE;
+        this.partSize = ((this.collector.length()) / CLUSTER_SIZE)/3;
         for(let worker of this.workers){
-            worker.send({request: 'processCollectionPart', data: this.collector.getProcessRange(partSize)});
+            worker.send({request: 'processCollectionPart', data: this.collector.getProcessRange(this.partSize)});
         }
     }
     public static getInstance(){
@@ -109,19 +128,13 @@ class MainProcess{
 
 class WorkerProcess{
     constructor(){
-        //probably not going to be needed if updated code in main works.
-        // if(Number(process.env.part) === 0){
-        //     console.log(`starting discovery on worker ${process.getegid()} ${process.geteuid()} ${process.env.id}`);
-        //     const discovery = new Discovery().discoveredData;
-        //     !!process.send ? process.send({request: 'discoveredData', data: discovery}): console.error('unable to send master message because send is not defined on process in this instance.');
-        // }
-        // process.emit('ready');
+
         /**
          * Let's also do the same as we did in the main process 
          * and define a worker message handler elsewhere.
          */
         process.on('message', this.handleMainMessages);
-        setTimeout(() => process.exit(), 10000);
+        
     }
 
     processCollection(data: Collection[]){
@@ -138,82 +151,49 @@ class WorkerProcess{
         })
     }
 
+    private writeTemporaryData(data: any){
+        console.log("🚀 ~ file: index.ts ~ line 155 ~ WorkerProcess ~ writeTemporaryData ~ data", data)
+        console.log('Data Written')
+    }
+
     private handleMainMessages(msg: any, handle?:any){
         const {request, data} = msg;
+        console.log(`Cluster Part ${process.env.part} has received a request to process a ${request} message with data: ${data}`)
         switch(request){
             case 'processDiscovery':
                 const discovery = generateRandos();
                 !!process.send ? process.send({request: 'discoveryComplete', data: discovery}) : console.log('Unable to send Discovery, is the main node still alive?');
                 break;
             case 'processCollectionPart':
-                const partData = this.processCollection(data); // to be defined. can be just for show.
-                // !!process.send ? process.send({request: 'collectorDataResult', data: partData});
+                this.processCollection(data); 
+                break;
+            case 'writeData':
+                this.writeTemporaryData(data);
+                break;
             default:
                 console.log(`Message Type ${msg.request} is not configured.`);
         }
     }
 }
-    const generateRandos = (): Collection[] => {
-        const dat = [];
-        const seed = (Math.floor(Math.random() * 100));
-        console.log(`generating randoms with seed ${seed}`);
-        for(let i =0; i<seed;i++){
-            dat.push({
-                foo: Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 5),
-                bar: Math.floor(Math.random()) * 100,
-                baz: new Date()
-            });
-        }
-        return dat;
+
+
+const generateRandos = (): Collection[] => {
+    const dat = [];
+    const seed = (Math.floor(Math.random() * 100));
+    console.log(`generating randoms with seed ${seed}`);
+    for(let i =0; i<seed;i++){
+        dat.push({
+            foo: Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 5),
+            bar: Math.floor(Math.random()) * 100,
+            baz: new Date()
+        });
     }
+    return dat;
+}
 
 if(cluster.isMaster){
     const server = MainProcess.getInstance();
-    // const workers: Worker[] = []
-    // for(let i=0; i < CLUSTER_SIZE; i++){
-    //     // workers.push(cluster.fork({part: i}));
-    //     const worker = cluster.fork({part: i});
-    //     /**
-    //      * Let's move the event handler for the message outside this block.
-    //      * Maybe call it `mainEvents`
-    //      */
-    //     worker.on('message', (msg, worker) => {
-    //         console.log(msg);
-    //         const {data} = msg;
-    //         switch(data.request){
-    //             case 'discoveryComplete':
-    //                 console.log('discovery Processed.');
-    //                 console.log(data.data);
-    //                 break;
-    //             default:
-    //                 console.log('no action required for this message type.');
-    //         }
-    //     });
-    //     workers.push(worker);
-    // }
-    // cluster.once('ready', (worker) => {
-    //     console.log('parent received a ready signal');
-    // })
-    // while()
-    // cluster.workers[0] ? cluster.workers[0].send({request: 'processDiscovery'}) : (() => {
-    //     console.error(`workers are not initialized.`);
-    //     process.exit(1);
-    // })();
-    // cluster.on('discoveryComplete', )  
 } else {
     console.log(`[${process.env.part}] Now online`);
     const worker = new WorkerProcess();
-    // if(Number(process.env.part) === 0){
-    //     console.log(`starting discovery on worker ${process.getegid()} ${process.geteuid()} ${process.env.id}`);
-    //     const discovery = new Discovery().discoveredData;
-    //     !!process.send ? process.send({request: 'discoveredData', data: discovery}): console.error('unable to send master message because send is not defined on process in this instance.');
-    // }
-    // // process.emit('ready');
-    // /**
-    //  * Let's also do the same as we did in the main process 
-    //  * and define a worker message handler elsewhere.
-    //  */
-    // process.on('message', (msg) => {
-
-    // });
 }
