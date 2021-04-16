@@ -67,11 +67,17 @@ class MainProcess{
                 this.workers.push(worker);
             }
         }
+
+        setTimeout(this.haltProcess , 5*60*1000)
         /**
          * this is part of a scenario that I think could keep us from
          * having to have the worker determine if discovery should be done.
          */
         cluster.once('online', this.workerIsOnline);
+    }
+
+    private haltProcess(){
+        this.workers.forEach(w => w.send({request: 'haltCollection'}));
     }
 
     /**
@@ -101,6 +107,9 @@ class MainProcess{
             case 'collectionFailure':
                 this.processCollectionFailure(data, worker)
                 break;
+            case 'haltedCollection':
+                this.writer.send({request: 'writeFailureData', data});
+                break;
             default:
                 console.log('no action configured for this message type.');
         }
@@ -127,6 +136,8 @@ class MainProcess{
 }
 
 class WorkerProcess{
+    processActive: boolean = false;
+    haltCollection: boolean = false;
     constructor(){
 
         /**
@@ -138,21 +149,31 @@ class WorkerProcess{
     }
 
     processCollection(data: Collection[]){
-        data.forEach(datum => {
-            const seed = Math.round(Math.random() * 3000);
-            setTimeout(() => {
-                const success = Math.round(Math.random() * 100)
-                 !!process.send ?
-                    success > 55 ? 
-                    process.send({request: 'collectionSuccess', data: datum}) :
-                    process.send({request: 'collectionFailure', data: datum}) :
-                    console.log('Cannot Send, its undefined.');
-            }, seed)
-        })
+        this.processActive = true;
+        data.forEach((datum, index, array) => {
+            if(!this.haltCollection){
+                const seed = Math.round(Math.random() * 3000);
+                setTimeout(() => {
+                    const success = Math.round(Math.random() * 100)
+                     !!process.send ?
+                        success > 55 ? 
+                        process.send({request: 'collectionSuccess', data: datum}) :
+                        process.send({request: 'collectionFailure', data: datum}) :
+                        console.log('Cannot Send, its undefined.');
+                }, seed);
+            } else {
+                process.send? process.send({request: 'haltedCollection', data: array.splice(index, array.length - index)}): console.error("unable to send halted message.");
+            }
+        });
+        this.processActive = false;
     }
 
     private writeTemporaryData(data: any){
         console.log("🚀 ~ file: index.ts ~ line 155 ~ WorkerProcess ~ writeTemporaryData ~ data", data)
+        console.log('Data Written')
+    }
+    private writeFailureData(data: any){
+        console.log("🚀 ~ file: index.ts ~ line 155 ~ WorkerProcess ~ writeFailureData ~ data", data)
         console.log('Data Written')
     }
 
@@ -170,6 +191,11 @@ class WorkerProcess{
             case 'writeData':
                 this.writeTemporaryData(data);
                 break;
+            case 'writeFailureData':
+                this.writeFailureData(data);
+                break;
+            case 'haltCollection':
+                this.haltCollection = true;
             default:
                 console.log(`Message Type ${msg.request} is not configured.`);
         }
